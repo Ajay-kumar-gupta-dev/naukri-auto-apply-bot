@@ -1,15 +1,25 @@
 """
 =============================================================
   Naukri Job Application Bot — v10 SMART SKIP
-  Built for: Ajaykumar Gupta
+  Author: Ajaykumar Gupta
+  GitHub: github.com/YOUR_USERNAME/naukri-auto-apply-bot
+
   Run:  python3 naukri_bot.py
   Stop: Ctrl+C (anytime)
 =============================================================
-  NEW IN v10:
+  Features:
   - Failed/problem jobs are saved to skip_list.json
   - Skipped jobs are NEVER picked up again
   - Chatbot questions answered automatically
   - Runs forever until Ctrl+C
+=============================================================
+
+  Setup:
+  1. Copy .env.example to .env
+  2. Fill in your Naukri credentials in .env
+  3. pip install playwright python-dotenv
+  4. playwright install chromium
+  5. python3 naukri_bot.py
 =============================================================
 """
 
@@ -20,21 +30,24 @@ import hashlib
 import traceback
 from datetime import datetime
 from playwright.async_api import async_playwright
+from dotenv import load_dotenv
+
+# ── Load credentials from .env ────────────────────────────
+load_dotenv()
+
+NAUKRI_EMAIL     = os.getenv("NAUKRI_EMAIL", "")
+NAUKRI_PASSWORD  = os.getenv("NAUKRI_PASSWORD", "")
+EXPERIENCE_YEARS = os.getenv("TOTAL_EXPERIENCE", "5")
+NOTICE_PERIOD    = os.getenv("NOTICE_PERIOD", "30")
+CURRENT_CTC      = os.getenv("CURRENT_CTC", "")
+EXPECTED_CTC     = os.getenv("EXPECTED_CTC", "")
 
 # ─────────────────────────────────────────────
-NAUKRI_EMAIL     = "ag5224741@gmail.com"
-NAUKRI_PASSWORD  = "Lockdown@2026"
 BATCH_SIZE       = 5
 LOG_FILE         = "naukri_applications_log.json"
-SKIP_FILE        = "skip_list.json"          # ← NEW: tracks skipped jobs
+SKIP_FILE        = "skip_list.json"
 SCREENSHOT_DIR   = "debug_screenshots"
 RECOMMENDED_URL  = "https://www.naukri.com/mnjuser/recommendedjobs"
-
-# ── Ajay's answers for chatbot questions ──────
-EXPERIENCE_YEARS = "5"
-NOTICE_PERIOD    = "30"
-CURRENT_CTC      = "8"
-EXPECTED_CTC     = "12"
 # ─────────────────────────────────────────────
 
 
@@ -196,7 +209,6 @@ async def handle_chatbot(page):
             try:
                 inp = await page.query_selector(input_sel)
                 if inp and await inp.is_visible():
-                    # Get question context
                     q_text = ""
                     for q_sel in ["[class*='question']", "[class*='chatbot'] p", "[class*='chat'] span"]:
                         try:
@@ -214,7 +226,7 @@ async def handle_chatbot(page):
                     elif any(w in q_text for w in ["expected", "expectation"]):
                         ans = EXPECTED_CTC
                     else:
-                        ans = EXPERIENCE_YEARS  # years of experience (default)
+                        ans = EXPERIENCE_YEARS
 
                     await inp.fill(ans)
                     await page.wait_for_timeout(400)
@@ -251,7 +263,6 @@ async def handle_chatbot(page):
             print("    ✓ Chatbot closed!")
             return True
 
-        # ── Click Save/Close if stuck ──
         for close_sel in ["button:has-text('Save')", "button[aria-label='close']", "[class*='close']"]:
             try:
                 cb = await page.query_selector(close_sel)
@@ -320,11 +331,15 @@ async def get_job_cards(page):
 async def run():
     print("\n╔══════════════════════════════════════════╗")
     print("║   NAUKRI BOT v10 — SMART SKIP            ║")
-    print("║   Ajaykumar Gupta                         ║")
-    print("║   Press Ctrl+C to stop anytime            ║")
+    print("║   github.com/YOUR_USERNAME/naukri-bot    ║")
+    print("║   Press Ctrl+C to stop anytime           ║")
     print("╚══════════════════════════════════════════╝\n")
 
-    # Load skip list from previous runs
+    if not NAUKRI_EMAIL or not NAUKRI_PASSWORD:
+        print("  ❌ ERROR: NAUKRI_EMAIL and NAUKRI_PASSWORD not set.")
+        print("  Create a .env file from .env.example and fill in your credentials.\n")
+        return
+
     skip_list = load_skip_list()
     print(f"  📋 Loaded {len(skip_list)} previously skipped jobs\n")
 
@@ -384,7 +399,6 @@ async def run():
 
                 all_cards = await get_job_cards(page)
 
-                # ── Filter out skipped jobs ──
                 cards = []
                 skipped_this_batch = 0
                 for card in all_cards:
@@ -412,12 +426,10 @@ async def run():
                     scroll_count += 1
                     continue
 
-                empty_rounds   = 0
-                to_apply       = cards[:BATCH_SIZE]
-                selected       = []
-                failed_to_click = []
+                empty_rounds = 0
+                to_apply     = cards[:BATCH_SIZE]
+                selected     = []
 
-                # ── Select checkboxes ──
                 for item in to_apply:
                     try:
                         await page.mouse.click(item['cbX'], item['cbY'])
@@ -425,17 +437,14 @@ async def run():
                         selected.append(item)
                         icon = "☑" if item['hasCb'] else "☐"
                         print(f"    {icon}  {item['title']} @ {item['company']}")
-                    except Exception as e:
-                        # Click failed — add to skip list
+                    except Exception:
                         skip_list = add_to_skip(skip_list, item['title'], item['company'], "click-timeout")
-                        failed_to_click.append(item)
 
                 if not selected:
                     scroll_count += 1
                     batch_num += 1
                     continue
 
-                # ── Click Apply button ──
                 apply_clicked = False
                 for sel in [
                     "button.multi-apply-button",
@@ -456,7 +465,6 @@ async def run():
                         continue
 
                 if not apply_clicked:
-                    # Apply button missing — skip ALL selected jobs
                     print("  ⚠️  Apply button not found — skipping this batch")
                     for item in selected:
                         skip_list = add_to_skip(skip_list, item['title'], item['company'], "no-apply-button")
@@ -464,7 +472,6 @@ async def run():
                     batch_num += 1
                     continue
 
-                # ── Check for error message (incomplete application) ──
                 await page.wait_for_timeout(1500)
                 error_visible = False
                 try:
@@ -486,12 +493,10 @@ async def run():
                     batch_num += 1
                     continue
 
-                # ── Handle chatbot ──
-                chatbot_found = await handle_chatbot(page)
+                await handle_chatbot(page)
                 await page.wait_for_timeout(1000)
                 await close_popups(page)
 
-                # ── Check success banner ──
                 success = False
                 try:
                     success_el = await page.query_selector(
@@ -509,7 +514,6 @@ async def run():
                     today_total    = get_today_count()
                     print(f"  ✅ Batch {batch_num} done! Session: {total_applied} | Today: {today_total}\n")
                 else:
-                    # Something went wrong — skip these jobs
                     print("  ⚠️  Uncertain result — skipping this batch to be safe")
                     for item in selected:
                         skip_list = add_to_skip(skip_list, item['title'], item['company'], "uncertain-result")
@@ -558,7 +562,7 @@ async def run():
                 await browser.close()
             except Exception:
                 pass
-            print("\n  Good luck, Ajay! 🎯\n")
+            print("\n  Bot stopped. Good luck! 🎯\n")
 
 
 if __name__ == "__main__":
